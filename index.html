@@ -1,1 +1,260 @@
 
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#080e19">
+<title>AI SCALPER</title>
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;background:#080e19;color:#edf3ff;
+ font-family:Arial,sans-serif;padding:18px;
+}
+header{display:flex;justify-content:space-between;align-items:center}
+.logo{font-size:23px;font-weight:bold;color:#42d6a4}
+.status{font-size:12px;color:#42d6a4}
+.card{
+ background:#111c2c;border:1px solid #26364b;
+ border-radius:14px;padding:16px;margin-top:16px;
+}
+h2{font-size:17px;margin:0 0 14px}
+.price{font-size:30px;font-weight:bold}
+.muted{color:#8d9bb0;font-size:12px}
+.green{color:#35d6a0}
+.red{color:#ff6476}
+select,input{
+ background:#0a1422;color:white;border:1px solid #34465d;
+ border-radius:8px;padding:11px;width:100%;margin-top:8px;
+}
+button{
+ border:0;border-radius:9px;padding:13px;
+ font-weight:bold;color:white;cursor:pointer;
+}
+.actions{display:flex;gap:10px;margin-top:14px}
+.actions button{flex:1}
+.long{background:#079b70}
+.short{background:#c94358}
+.analyze{background:#2468d8;width:100%;margin-top:14px}
+canvas{width:100%;height:220px;display:block}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.metric{background:#0b1524;padding:12px;border-radius:9px}
+.metric b{display:block;margin-top:7px;font-size:17px}
+.result{font-size:20px;font-weight:bold;margin-top:10px}
+footer{text-align:center;color:#75849b;font-size:11px;margin:22px 0}
+</style>
+</head>
+<body>
+
+<header>
+ <div class="logo">AI SCALPER</div>
+ <div class="status">● SYSTEM ONLINE</div>
+</header>
+
+<div class="card">
+ <h2>Рынок GOLD / XAUUSD</h2>
+ <div class="muted">Демо-режим · Котировки не подключены</div>
+ <div class="price" id="price">--.--</div>
+ <div class="muted">Тестовая цена, не рыночная котировка</div>
+</div>
+
+<div class="card">
+ <h2>График GOLD</h2>
+ <select id="tf">
+  <option>M1</option>
+  <option>M5</option>
+  <option>M15</option>
+  <option>M30</option>
+  <option>H1</option>
+  <option>H4</option>
+ </select>
+ <canvas id="chart"></canvas>
+ <div class="muted">Синтетические свечи для проверки интерфейса</div>
+</div>
+
+<div class="card">
+ <h2>AI ANALYSIS</h2>
+ <div class="grid">
+  <div class="metric">
+   <span class="muted">EMA 9</span>
+   <b id="ema9">--</b>
+  </div>
+  <div class="metric">
+   <span class="muted">EMA 21</span>
+   <b id="ema21">--</b>
+  </div>
+  <div class="metric">
+   <span class="muted">ATR 14</span>
+   <b id="atr">--</b>
+  </div>
+  <div class="metric">
+   <span class="muted">Направление</span>
+   <b id="trend">Ожидание</b>
+  </div>
+ </div>
+ <button class="analyze" onclick="analyze()">ЗАПУСТИТЬ ДЕМО-АНАЛИЗ</button>
+ <div class="result" id="signal">Ожидание анализа</div>
+ <p class="muted" id="explain">Нажми кнопку для проверки демонстрационной логики.</p>
+</div>
+
+<div class="card">
+ <h2>Торговые уровни (демо)</h2>
+ <div class="grid">
+  <div>
+   <span class="muted">Цена входа</span>
+   <input id="entry" type="number" placeholder="Цена">
+  </div>
+  <div>
+   <span class="muted">ATR</span>
+   <input id="atrInput" type="number" placeholder="ATR">
+  </div>
+  <div>
+   <span class="muted">Stop Loss</span>
+   <b id="sl">--</b>
+  </div>
+  <div>
+   <span class="muted">Take Profit</span>
+   <b id="tp">--</b>
+  </div>
+ </div>
+ <div class="actions">
+  <button class="long" onclick="setTrade('LONG')">LONG</button>
+  <button class="short" onclick="setTrade('SHORT')">SHORT</button>
+ </div>
+ <p class="muted" id="tradeInfo">Уровни рассчитываются только для демонстрации.</p>
+</div>
+
+<div class="card">
+ <h2>Подключения</h2>
+ <div class="metric">Telegram <span class="red">● Не подключён</span></div>
+ <div class="metric" style="margin-top:9px">
+  MetaTrader 5 <span class="red">● Не подключён</span>
+ </div>
+ <div class="metric" style="margin-top:9px">
+  OpenAI API <span class="red">● Не подключён</span>
+ </div>
+</div>
+
+<footer>
+AI SCALPER v1.0 · DEMO INTERFACE<br>
+Не является реальным торговым сигналом
+</footer>
+
+<script>
+let candles=[];
+let currentPrice=0;
+let currentATR=0;
+
+function init(){
+ let p=4200;
+ candles=[];
+ for(let i=0;i<55;i++){
+  let o=p;
+  let c=o+(Math.random()-.48)*12;
+  let h=Math.max(o,c)+Math.random()*5;
+  let l=Math.min(o,c)-Math.random()*5;
+  candles.push({o,c,h,l});
+  p=c;
+ }
+ currentPrice=p;
+ document.getElementById('price').textContent=p.toFixed(2);
+ draw();
+}
+
+function draw(){
+ const canvas=document.getElementById('chart');
+ const w=canvas.clientWidth;
+ const h=220;
+ const dpr=window.devicePixelRatio||1;
+ canvas.width=w*dpr;
+ canvas.height=h*dpr;
+ const ctx=canvas.getContext('2d');
+ ctx.scale(dpr,dpr);
+ ctx.clearRect(0,0,w,h);
+
+ let max=Math.max(...candles.map(x=>x.h));
+ let min=Math.min(...candles.map(x=>x.l));
+ let y=v=>h-12-(v-min)/(max-min)*(h-24);
+ let step=w/candles.length;
+
+ ctx.strokeStyle='#24354a';
+ ctx.lineWidth=1;
+ for(let i=0;i<5;i++){
+  let yy=i*h/5;
+  ctx.beginPath();ctx.moveTo(0,yy);
+  ctx.lineTo(w,yy);ctx.stroke();
+ }
+
+ candles.forEach((c,i)=>{
+  let x=i*step+step/2;
+  let up=c.c>=c.o;
+  ctx.strokeStyle=up?'#35d6a0':'#ff6476';
+  ctx.fillStyle=ctx.strokeStyle;
+  ctx.beginPath();ctx.moveTo(x,y(c.h));
+  ctx.lineTo(x,y(c.l));ctx.stroke();
+  let top=y(Math.max(c.o,c.c));
+  let bottom=y(Math.min(c.o,c.c));
+  ctx.fillRect(x-step*.3,top,step*.6,Math.max(2,bottom-top));
+ });
+}
+
+function ema(period){
+ let values=candles.map(c=>c.c);
+ let k=2/(period+1);
+ let e=values[0];
+ for(let i=1;i<values.length;i++)
+  e=values[i]*k+e*(1-k);
+ return e;
+}
+
+function atr(){
+ let last=candles.slice(-14);
+ let sum=last.reduce((s,c)=>s+c.h-c.l,0);
+ return sum/last.length;
+}
+
+function analyze(){
+ let e9=ema(9),e21=ema(21);
+ currentATR=atr();
+ let direction=e9>e21?'LONG':'SHORT';
+ document.getElementById('ema9').textContent=e9.toFixed(2);
+ document.getElementById('ema21').textContent=e21.toFixed(2);
+ document.getElementById('atr').textContent=currentATR.toFixed(2);
+ document.getElementById('trend').textContent=direction;
+ document.getElementById('trend').className=
+ direction==='LONG'?'green':'red';
+ document.getElementById('signal').textContent=
+ 'ДЕМО: '+direction;
+ document.getElementById('signal').className=
+ 'result '+(direction==='LONG'?'green':'red');
+ document.getElementById('explain').textContent=
+ 'Направление определено по сравнению EMA 9 и EMA 21. Это синтетические данные, не прогноз рынка.';
+ document.getElementById('entry').value=currentPrice.toFixed(2);
+ document.getElementById('atrInput').value=currentATR.toFixed(2);
+ setTrade(direction);
+}
+
+function setTrade(direction){
+ let entry=Number(document.getElementById('entry').value);
+ let a=Number(document.getElementById('atrInput').value);
+ if(!entry||!a||a<=0){
+  document.getElementById('tradeInfo').textContent=
+  'Введи цену входа и ATR.';
+  return;
+ }
+ let sl=direction==='LONG'?entry-2*a:entry+2*a;
+ let tp=direction==='LONG'?entry+3*a:entry-3*a;
+ document.getElementById('sl').textContent=sl.toFixed(2);
+ document.getElementById('tp').textContent=tp.toFixed(2);
+ document.getElementById('tradeInfo').textContent=
+ direction+' · Демо-расчёт уровней по ATR.';
+}
+
+document.getElementById('tf').addEventListener('change',init);
+window.addEventListener('resize',draw);
+init();
+</script>
+</body>
+</html>
