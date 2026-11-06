@@ -59,7 +59,37 @@ footer{
 </head>
 
 <body>
-
+ 
+<script>
+(function(){
+  var MAP={EURUSD:"EURUSDT",GBPUSD:"GBPUSDT",AUDUSD:"AUDUSDT",XAUUSD:"PAXGUSDT"};
+  var TF={M1:"1m",M5:"5m",M15:"15m",M30:"30m",H1:"1h",H4:"4h",D1:"1d"};
+  function $(i){return document.getElementById(i)}
+  async function upd(){
+    var sym=($("symbol").value||"").replace(/[^A-Za-z]/g,"").toUpperCase();
+    var tf=$("tf").value||"M15";
+    var pair=MAP[sym]||(sym.endsWith("USDT")?sym:sym+"T");
+    try{
+      var r=await fetch("https://api.binance.com/api/v3/klines?symbol="+pair+"&interval="+(TF[tf]||"15m")+"&limit=100");
+      if(!r.ok)throw 0;
+      var k=(await r.json()).map(function(x){return{h:+x[2],l:+x[3],c:+x[4]}});
+      var tr=[];
+      for(var i=1;i<k.length;i++)tr.push(Math.max(k[i].h-k[i].l,Math.abs(k[i].h-k[i-1].c),Math.abs(k[i].l-k[i-1].c)));
+      var atr=tr.slice(-14).reduce(function(a,b){return a+b})/14;
+      var p=k[k.length-1].c, d=p>=100?2:5;
+      $("price").textContent=p.toFixed(d);
+      if($("atr"))$("atr").value=atr.toFixed(d);
+      $("marketStatus").innerHTML='<span style="color:#22c55e">● РЕАЛЬНЫЕ КОТИРОВКИ ('+pair+', Binance)</span>';
+    }catch(e){
+      $("marketStatus").innerHTML='<span style="color:#ef4444">● Котировки не подключены</span>';
+    }
+  }
+  window.addEventListener("load",function(){
+    upd(); setInterval(upd,10000);
+    ["symbol","tf","category"].forEach(function(i){$(i).addEventListener("change",function(){setTimeout(upd,300)})});
+  });
+})();
+</script>
 <header>
  <div class="logo">AI SCALPER PRO</div>
  <div class="status">● SYSTEM ONLINE</div>
