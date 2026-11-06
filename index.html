@@ -62,27 +62,136 @@ footer{
  
 <script>
 (function(){
-  var MAP={EURUSD:"EURUSDT",GBPUSD:"GBPUSDT",AUDUSD:"AUDUSDT",XAUUSD:"PAXGUSDT"};
-  var TF={M1:"1m",M5:"5m",M15:"15m",M30:"30m",H1:"1h",H4:"4h",D1:"1d"};
+  var CFG={td:localStorage.getItem("td_key")||"",mt5:(localStorage.getItem("mt5_url")||"").replace(/\/$/,"")};
+  var L={
+    forex:["EURUSD","GBPUSD","USDJPY","USDCHF","AUDUSD","NZDUSD","USDCAD","EURGBP","EURJPY","GBPJPY"],
+    metals:["XAUUSD","XAGUSD","XPTUSD","XPDUSD"],
+    crypto:["BTCUSDT","ETHUSDT"]
+  };
+  var BTF={M1:"1m",M5:"5m",M15:"15m",M30:"30m",H1:"1h",H4:"4h",D1:"1d"};
+  var TTF={M1:"1min",M5:"5min",M15:"15min",M30:"30min",H1:"1h",H4:"4h",D1:"1day"};
+  var run=0,ws=null,timer=null,cur=[],lastDraw=0;
   function $(i){return document.getElementById(i)}
-  async function upd(){
-    var sym=($("symbol").value||"").replace(/[^A-Za-z]/g,"").toUpperCase();
-    var tf=$("tf").value||"M15";
-    var pair=MAP[sym]||(sym.endsWith("USDT")?sym:sym+"T");
+  function J(u){return fetch(u).then(function(r){if(!r.ok)throw 0;return r.json()})}
+  function fmt(p){return p.toFixed(p>=100?2:p>=1?5:p>=0.01?6:8)}
+
+  async function loadLists(){
     try{
-      var r=await fetch("https://api.binance.com/api/v3/klines?symbol="+pair+"&interval="+(TF[tf]||"15m")+"&limit=100");
-      if(!r.ok)throw 0;
-      var k=(await r.json()).map(function(x){return{h:+x[2],l:+x[3],c:+x[4]}});
-      var tr=[];
-      for(var i=1;i<k.length;i++)tr.push(Math.max(k[i].h-k[i].l,Math.abs(k[i].h-k[i-1].c),Math.abs(k[i].l-k[i-1].c)));
-      var atr=tr.slice(-14).reduce(function(a,b){return a+b})/14;
-      var p=k[k.length-1].c, d=p>=100?2:5;
-      $("price").textContent=p.toFixed(d);
-      if($("atr"))$("atr").value=atr.toFixed(d);
-      $("marketStatus").innerHTML='<span style="color:#22c55e">● РЕАЛЬНЫЕ КОТИРОВКИ ('+pair+', Binance)</span>';
-    }catch(e){
-      $("marketStatus").innerHTML='<span style="color:#ef4444">● Котировки не подключены</span>';
+      var a=await J("https://api.binance.com/api/v3/ticker/24hr");
+      L.crypto=a.filter(function(x){return /USDT$/.test(x.symbol)&&+x.quoteVolume>0&&!/(UP|DOWN|BULL|BEAR)USDT$/.test(x.symbol)})
+        .sort(function(x,y){return y.quoteVolume-x.quoteVolume}).map(function(x){return x.symbol});
+    }catch(e){}
+    if(CFG.mt5){
+      try{var s=await J(CFG.mt5+"/symbols");
+        if(s.forex.length)L.forex=s.forex; if(s.metals.length)L.metals=s.metals;
+      }catch(e){}
     }
+  }
+  function populate(){
+    $("symbol").innerHTML=(L[$("category").value]||[]).map(function(x){return '<option value="'+x+'">'+x+'</option>'}).join("");
+  }
+  async function bin(sym,tf){
+    var a=await J("https://api.binance.com/api/v3/klines?symbol="+sym+"&interval="+BTF[tf]+"&limit=300");
+    return a.map(function(x){return{t:x[0],h:+x[2],l:+x[3],c:+x[4]}});
+  }
+  function mt5c(sym,tf){return J(CFG.mt5+"/candles?symbol="+sym+"&tf="+tf+"&n=300")}
+  async function tdc(sym,tf){
+    var a=await J("https://api.twelvedata.com/time_series?symbol="+sym.slice(0,3)+"/"+sym.slice(3)+"&interval="+TTF[tf]+"&outputsize=250&apikey="+CFG.td);
+    if(!a.values)throw 0;
+    return a.values.slice().reverse().map(function(x){return{h:+x.high,l:+x.low,c:+x.close}});
+  }
+
+  // ---------- индикаторы ----------
+  function ema(a,p){var k=2/(p+1),r=[a[0]];for(var i=1;i<a.length;i++)r.push(a[i]*k+r[i-1]*(1-k));return r}
+  function rsi(c,p){
+    var g=0,l=0,i;
+    for(i=1;i<=p;i++){var d=c[i]-c[i-1];d>0?g+=d:l-=d}
+    g/=p;l/=p;
+    for(i=p+1;i<c.length;i++){var d2=c[i]-c[i-1];g=(g*(p-1)+(d2>0?d2:0))/p;l=(l*(p-1)+(d2<0?-d2:0))/p}
+    return l===0?100:100-100/(1+g/l);
+  }
+  function atr(k,p){
+    var tr=[];
+    for(var i=1;i<k.length;i++)tr.push(Math.max(k[i].h-k[i].l,Math.abs(k[i].h-k[i-1].c),Math.abs(k[i].l-k[i-1].c)));
+    var a=tr.slice(0,p).reduce(function(x,y){return x+y},0)/p;
+    for(i=p;i<tr.length;i++)a=(a*(p-1)+tr[i])/p;
+    return a;
+  }
+  function analyze(k){
+    var c=k.map(function(x){return x.c}),p=c[c.length-1];
+    var e9=ema(c,9),e21=ema(c,21),e50=ema(c,50),e200=ema(c,200);
+    var m=ema(c,12).map(function(v,i){return v-ema(c,26)[i]});
+    var sg=ema(m,9),h=m[m.length-1]-sg[sg.length-1];
+    var R=rsi(c,14),A=atr(k,14),n=c.length-1,s=0;
+    s+=e9[n]>e21[n]?1:-1; s+=p>e50[n]?1:-1;
+    if(c.length>=200)s+=e50[n]>e200[n]?1:-1;
+    s+=R>55?1:R<45?-1:0; s+=h>0?1:-1;
+    var sig=s>=3?"BUY":s<=-3?"SELL":"WAIT";
+    var d=sig==="SELL"?-1:1;
+    return{p:p,e9:e9[n],e21:e21[n],e50:e50[n],e200:e200[n],rsi:R,macd:h,atr:A,score:s,sig:sig,
+           sl:p-d*A*1.5,tp:p+d*A*3};
+  }
+  function render(sym,src,k){
+    if(k.length<30)return;
+    var r=analyze(k);
+    $("price").textContent=fmt(r.p);
+    if($("atr"))$("atr").value=fmt(r.atr);
+    $("marketStatus").innerHTML='<span style="color:#22c55e">● LIVE: '+sym+' — '+src+'</span>';
+    var col=r.sig==="BUY"?"#22c55e":r.sig==="SELL"?"#ef4444":"#eab308";
+    var box=$("rtAnalysis");
+    if(!box){box=document.createElement("div");box.id="rtAnalysis";$("price").parentNode.appendChild(box)}
+    function m(n,v){return '<div style="background:#0b1524;padding:8px;border-radius:8px"><span style="opacity:.6;font-size:11px">'+n+'</span><br><b>'+v+'</b></div>'}
+    box.innerHTML='<div style="margin-top:12px;font-size:26px;font-weight:bold;color:'+col+'">'+r.sig+' <span style="font-size:13px;opacity:.7">счёт '+r.score+'/5</span></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">'+
+      m("EMA 9 / 21",fmt(r.e9)+" / "+fmt(r.e21))+m("EMA 50 / 200",fmt(r.e50)+" / "+fmt(r.e200))+
+      m("RSI 14",r.rsi.toFixed(1))+m("MACD гист.",r.macd.toFixed(6))+
+      m("ATR 14",fmt(r.atr))+m("SL / TP",r.sig==="WAIT"?"—":fmt(r.sl)+" / "+fmt(r.tp))+'</div>';
+  }
+  var links=' <a href="#" style="color:#60a5fa" onclick="var k=prompt(\'Ключ Twelve Data:\');if(k){localStorage.setItem(\'td_key\',k.trim());location.reload()}return false">ключ Twelve Data</a> | <a href="#" style="color:#60a5fa" onclick="var u=prompt(\'Адрес MT5-моста (https://...):\');if(u){localStorage.setItem(\'mt5_url\',u.trim());location.reload()}return false">MT5</a>';
+
+  function stop(){clearTimeout(timer);if(ws){ws.onclose=null;ws.close();ws=null}}
+  function nodata(sym,cat){
+    $("marketStatus").innerHTML='<span style="color:#ef4444">● Нет данных для '+sym+'.</span>'+(cat==="crypto"?'':' Подключи:'+links);
+  }
+  async function start(){
+    stop();var t=++run,cat=$("category").value,sym=$("symbol").value,tf=$("tf").value||"M15";
+    if(!sym)return;
+    if(cat==="crypto"){
+      try{cur=await bin(sym,tf)}catch(e){return nodata(sym,cat)}
+      if(t!==run)return;
+      render(sym,"Binance WebSocket",cur);
+      (function open(){
+        if(t!==run)return;
+        ws=new WebSocket("wss://stream.binance.com:9443/ws/"+sym.toLowerCase()+"@kline_"+BTF[tf]);
+        ws.onmessage=function(e){
+          var d=JSON.parse(e.data).k,c={t:d.t,h:+d.h,l:+d.l,c:+d.c},last=cur[cur.length-1];
+          if(last.t===d.t)cur[cur.length-1]=c;else{cur.push(c);cur.shift()}
+          if(Date.now()-lastDraw>1000){lastDraw=Date.now();render(sym,"Binance WebSocket",cur)}
+        };
+        ws.onclose=function(){setTimeout(open,3000)};
+      })();
+    }else poll(t,sym,tf,cat);
+  }
+  async function poll(t,sym,tf,cat){
+    if(t!==run)return;
+    var k=null,src="",delay=3000;
+    try{
+      if(CFG.mt5){try{k=await mt5c(sym,tf);src="MT5 / FxPro"}catch(e){}}
+      if(!k&&CFG.td){k=await tdc(sym,tf);src="Twelve Data (раз в 2 мин)";delay=120000}
+    }catch(e){k=null}
+    if(t!==run)return;
+    if(k&&k.length>30)render(sym,src,k);else{nodata(sym,cat);delay=10000}
+    timer=setTimeout(function(){poll(t,sym,tf,cat)},delay);
+  }
+  window.addEventListener("load",async function(){
+    await loadLists();populate();
+    $("category").addEventListener("change",function(){setTimeout(function(){populate();start()},100)});
+    $("symbol").addEventListener("change",start);
+    $("tf").addEventListener("change",start);
+    start();
+  });
+})();
+</script>
   }
   window.addEventListener("load",function(){
     upd(); setInterval(upd,10000);
